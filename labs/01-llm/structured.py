@@ -36,7 +36,8 @@ def analyze_question(client: LLMClient, question: str) -> QuestionAnalysis:
     # TODO 6: convierte el texto en un QuestionAnalysis en dos pasos separados:
     #   1. json.loads(...)                     → ¿es JSON válido?
     #   2. QuestionAnalysis.model_validate(...) → ¿cumple el esquema?
-    raise NotImplementedError("Completa analyze_question")
+    data = json.loads(response.text)
+    return QuestionAnalysis.model_validate(data)
 
 
 def main() -> None:

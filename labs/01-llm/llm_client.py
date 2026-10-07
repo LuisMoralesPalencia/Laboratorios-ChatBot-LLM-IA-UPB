@@ -40,20 +40,33 @@ class LLMClient:
         max_tokens: int | None = None,
         json_mode: bool = False,
     ) -> LLMResponse:
-        # TODO 1: llamar a la API de Chat Completions.
-        #   - Usa self._client.chat.completions.create(...)
-        #   - Parámetros: model, messages, temperature, max_tokens.
-        #     Si temperature/max_tokens son None, usa los valores de self.settings.
-        #   - Si json_mode es True, agrega response_format={"type": "json_object"}.
-        #   - Captura openai.APIError y relánzalo como LLMError
-        #     (la aplicación no debe depender de las excepciones del SDK).
-        #
-        # TODO 2: construir y devolver un LLMResponse a partir de la respuesta:
-        #   - completion.choices[0].message.content  → text
-        #   - completion.model                       → model
-        #   - completion.choices[0].finish_reason    → finish_reason
-        #   - completion.usage.prompt_tokens / completion_tokens
-        raise NotImplementedError("Completa LLMClient.chat")
+        request = {
+            "model": self.settings.model,
+            "messages": messages,
+            "temperature": (
+                self.settings.temperature if temperature is None else temperature
+            ),
+            "max_tokens": (
+                self.settings.max_tokens if max_tokens is None else max_tokens
+            ),
+        }
+        if json_mode:
+            request["response_format"] = {"type": "json_object"}
+
+        try:
+            completion = self._client.chat.completions.create(**request)
+        except openai.APIError as error:
+            raise LLMError(str(error)) from error
+
+        choice = completion.choices[0]
+        usage = completion.usage
+        return LLMResponse(
+            text=choice.message.content or "",
+            model=completion.model,
+            finish_reason=choice.finish_reason,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+        )
 
 
 if __name__ == "__main__":
