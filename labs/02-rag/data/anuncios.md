@@ -17,3 +17,7 @@ este laboratorio agrega nuevas dependencias.
 Comienza la unidad 5, De Transformer a sistemas orquestados con LLM. Durante cuatro semanas
 construiremos el Asistente Inteligente del Curso de IA. Cada semana se publica un laboratorio que
 parte del anterior.
+
+## Cambio en el horario de asesorías
+
+A partir de esta semana, las sesiones de asesoría del curso cambian de horario. Se realizarán los **miércoles de 4:00 p. m. a 6:00 p. m.** en el salón L-102.

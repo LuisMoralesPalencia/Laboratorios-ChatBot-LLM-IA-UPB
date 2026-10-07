@@ -48,16 +48,18 @@ class VectorStore:
         self.chunks.extend(chunks)
 
     def search(self, query_vector: np.ndarray, k: int) -> list[SearchResult]:
-        """Devuelve los k fragmentos más parecidos a la consulta, del más al menos parecido."""
         if self._vectors is None:
             return []
-        # TODO 2: busca por similitud coseno.
-        #   - self._vectors ya está normalizado (ver add); normaliza también query_vector.
-        #   - Con vectores normalizados, el producto punto es la similitud coseno:
-        #     self._vectors @ q calcula en una sola operación el puntaje de TODOS los fragmentos.
-        #   - Ordena los índices de mayor a menor puntaje (np.argsort) y toma los k primeros.
-        #   - Devuelve un SearchResult(chunk, score) por cada uno (score como float de Python).
-        raise NotImplementedError("Completa VectorStore.search")
+        
+        query_normalized = normalize(query_vector)
+        scores = self._vectors @ query_normalized
+        
+        top_indices = np.argsort(scores)[::-1][:k]
+        
+        return [
+            SearchResult(chunk=self.chunks[i], score=float(scores[i]))
+            for i in top_indices
+        ]
 
     def save(self, index_dir: Path) -> None:
         index_dir.mkdir(parents=True, exist_ok=True)
