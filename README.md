@@ -14,6 +14,7 @@ cada componente, cómo interactúan y qué esconden los frameworks.
 |--------|-----|----------|
 | 1 | [`labs/01-llm`](labs/01-llm/) | Chatbot con LLM en Python (`Usuario → LLM`) |
 | 2 | [`labs/02-rag`](labs/02-rag/) | Chatbot RAG sobre los documentos del curso (`Usuario → RAG → LLM`) |
+| 3 | [`labs/03-mcp`](labs/03-mcp/) | Asistente con tools y un servidor MCP (`Usuario → Asistente → LLM + Tools`) |
 
 Los siguientes labs se agregarán a este repositorio cada semana. Actualiza tu copia con `git pull`.
 
@@ -82,5 +83,6 @@ ai-systems-lab-students/
 ├── .env.example       plantilla de configuración (cópiala como .env)
 └── labs/              un lab por semana
     ├── 01-llm/
-    └── 02-rag/
+    ├── 02-rag/
+    └── 03-mcp/
 ```

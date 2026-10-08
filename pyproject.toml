@@ -10,4 +10,5 @@ dependencies = [
     "pydantic>=2.7",       # validación de salida estructurada
     "fastembed>=0.5",      # Lab 02: modelo de embeddings local (ONNX, CPU, sin API key)
     "numpy>=1.26",         # Lab 02: vectores y similitud coseno en el vector store
+    "mcp>=2.2,<3",         # Lab 03: SDK oficial de MCP (servidor y cliente; la API 2.x difiere de la 1.x)
 ]
