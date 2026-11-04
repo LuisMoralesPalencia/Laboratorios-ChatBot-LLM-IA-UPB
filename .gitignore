@@ -15,3 +15,8 @@ index/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+#-------------SECRETOS DEL PARCIAL--------------------
+modelos/
+rostros/
+auditoria*.jsonl
