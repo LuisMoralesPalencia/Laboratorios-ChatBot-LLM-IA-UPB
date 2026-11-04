@@ -3,9 +3,9 @@
 Dos estrategias para decidir qué capacidad usar:
 
   modo "router" (flujo fijo, decidido por el software después de clasificar):
-      pregunta → router → "directa"   → LLM sin tools               (como el Lab 01)
-                        → "documentos" → CourseRAG.answer           (como el Lab 02)
-                        → "acciones"   → agente con tools y MCP     (como el Lab 03, con ciclo)
+      pregunta → router → "directa"   → LLM बिना tools           (como el Lab 01)
+                        → "documentos" → CourseRAG.answer          (como el Lab 02)
+                        → "acciones"   → agente con tools y MCP    (como el Lab 03, con ciclo)
 
   modo "agente" (flujo dinámico, decidido por el modelo en cada paso):
       pregunta → agente con TODAS las capacidades como tools (incluida buscar_documentos)
@@ -78,7 +78,30 @@ class Orchestrator:
         #   - "acciones":   self._from_agent(await self.actions_agent.run(question, history), mode)
         #   Después: answer.routing = routing, y agrega routing.response AL INICIO de answer.responses
         #   (la clasificación también fue una llamada al LLM). Devuelve answer.
-        raise NotImplementedError("Completa el despacho del modo router")
+        
+        if ruta == "directa":
+            response = self.llm.chat(build_direct_messages(history, question))
+            answer = OrchestratorAnswer(text=response.text, mode=mode, responses=[response])
+        elif ruta == "documentos":
+            rag_answer = self.rag.answer(question, history)
+            sources = sorted(list(set(result.chunk.source for result in rag_answer.sources)))
+            answer = OrchestratorAnswer(
+                text=rag_answer.text,
+                mode=mode,
+                sources=sources,
+                responses=[rag_answer.response]
+            )
+        elif ruta == "acciones":
+            agent_answer = await self.actions_agent.run(question, history)
+            answer = self._from_agent(agent_answer, mode)
+        else:
+            # Fallback defensivo por si viene otra ruta
+            response = self.llm.chat(build_direct_messages(history, question))
+            answer = OrchestratorAnswer(text=response.text, mode=mode, responses=[response])
+
+        answer.routing = routing
+        answer.responses.insert(0, routing.response)
+        return answer
 
     @staticmethod
     def _from_agent(result: AgentAnswer, mode: Mode) -> OrchestratorAnswer:

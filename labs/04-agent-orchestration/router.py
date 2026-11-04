@@ -44,7 +44,15 @@ def route(llm: LLMClient, question: str) -> RouterResult:
     #   - si lanza ValidationError, NO detengas el programa: devuelve un RouterResult con
     #     RouteDecision(ruta=FALLBACK_ROUTE, motivo=<explica que se usó la ruta de respaldo>) y fallback=True;
     #   - si es válido, devuelve RouterResult(decision, response, fallback=False).
-    raise NotImplementedError("Completa route")
+    try:
+        decision = RouteDecision.model_validate_json(response.text)
+        return RouterResult(decision=decision, response=response, fallback=False)
+    except ValidationError:
+        decision_respaldo = RouteDecision(
+            ruta=FALLBACK_ROUTE, 
+            motivo="La respuesta del modelo no cumplió con el formato JSON esperado. Se usa ruta segura de documentos."
+        )
+        return RouterResult(decision=decision_respaldo, response=response, fallback=True)
 
 if __name__ == "__main__":
     from config import load_settings

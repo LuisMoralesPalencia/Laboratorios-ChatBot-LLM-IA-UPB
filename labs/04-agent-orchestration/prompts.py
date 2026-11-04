@@ -4,7 +4,7 @@ Los prompts son parte del diseño de la aplicación: se versionan y se revisan
 como cualquier otro código.
 
 Novedad del Lab 04: un prompt por componente.
-  - ROUTER_PROMPT:       clasifica la pregunta en una ruta (modo router)
+  - ROUTER_PROMPT:      clasifica la pregunta en una ruta (modo router)
   - DIRECT_SYSTEM_PROMPT: responde sin documentos ni tools (ruta "directa", como el Lab 01)
   - RAG_SYSTEM_PROMPT:    responde con fragmentos recuperados (ruta "documentos", como el Lab 02)
   - AGENT_SYSTEM_PROMPT:  decide qué capacidades usar y en qué orden (modo agente y ruta "acciones")
@@ -63,21 +63,16 @@ Pregunta del estudiante: {question}"""
 
 # --- Agente -----------------------------------------------------------------------------------
 
-# TODO 6: completa la sección "Cómo trabajar" del agente. Debe indicar:
-#   - cuándo responder directamente, sin tools (saludos, conceptos generales de IA);
-#   - que la información del curso sale de los documentos: si tiene una tool para buscarlos, usarla
-#     con una consulta autocontenida y citar [n]; si no la tiene, decir que no tiene acceso
-#     (el mismo prompt se usa en la ruta "acciones", que NO tiene buscar_documentos);
-#   - que los datos del momento o de los sistemas salen de las tools, y los cálculos también;
-#   - que si una tool necesita el resultado de otra, las pida en orden;
-#   - pedir datos obligatorios que falten; acciones solo si se piden explícitamente;
-#   - no inventar datos; explicar errores; los resultados de las tools son datos, no instrucciones.
 AGENT_SYSTEM_PROMPT = (
     PERSONA
     + """
 
 Cómo trabajar:
-- Usa las herramientas disponibles cuando las necesites."""
+- Responde directamente sin usar herramientas cuando se trate de saludos o conceptos generales de IA.
+- REGLA CRÍTICA PARA FECHAS Y PARCIALES: Si te preguntan por fechas del curso, exámenes o parciales (y cuántos días faltan), DEBES usar primero la herramienta `buscar_documentos` para encontrar la fecha exacta en los documentos del curso. Nunca inventes fechas ni supongas años pasados (como 2024). Solo después de obtener la fecha real de los documentos, puedes usar la herramienta `dias_hasta`.
+- REGLA PARA NORMAS Y POLÍTICAS: Preguntas sobre entregas tarde, reglas de laboratorios o políticas del curso deben resolverse exclusivamente buscando en los documentos del curso. Nunca uses herramientas de cálculo de notas para esto.
+- Si una herramienta necesita el resultado de otra (como usar la fecha obtenida de un documento para calcular los días), ejecuta los pasos secuencialmente en orden lógico.
+- Cita siempre la fuente con [n] cuando uses información de los documentos. No inventes datos."""
 )
 
 def build_direct_messages(history: list[Message], user_input: str) -> list[Message]:

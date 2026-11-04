@@ -27,7 +27,33 @@ def rag_tool(rag: CourseRAG) -> Tool:
     #     descripción pida una pregunta autocontenida, p. ej. "fecha del primer parcial".
     #   - run: una función async que reciba los argumentos, recupere con rag.retrieve(consulta) y
     #     devuelva format_context(resultados). Solo recupera: NO llames a rag.answer (¿por qué?).
-    raise NotImplementedError("Completa rag_tool")
+    
+    async def run(args: dict[str, Any]) -> str:
+        consulta = args["consulta"]
+        resultados = rag.retrieve(consulta)
+        return format_context(resultados)
+
+    return Tool(
+        name="buscar_documentos",
+        origin="rag",
+        read_only=True,
+        description=(
+            "Busca información en los documentos del curso (programa, docente, horarios, "
+            "evaluación, fechas de parciales, políticas, anuncios, preguntas frecuentes) "
+            "y devuelve fragmentos numerados con su fuente."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "consulta": {
+                    "type": "string",
+                    "description": "Pregunta autocontenida para buscar en los documentos, p. ej. 'fecha del primer parcial'."
+                }
+            },
+            "required": ["consulta"]
+        },
+        run=run
+    )
 
 
 async def _demo(question: str) -> None:
