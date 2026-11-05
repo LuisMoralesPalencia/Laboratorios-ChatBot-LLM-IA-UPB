@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import asyncio
 import tempfile
+import secrets
 from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -16,8 +17,16 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import find_dotenv, load_dotenv
-from telegram import Update
-from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from llm_client import Message
 from orchestrator import Mode, Orchestrator
@@ -25,6 +34,8 @@ from prompts import PERSONALIZATION_NAME
 from sessions import SessionManager
 from liveness import LivenessResult, LivenessService, VideoNoteMetadata
 from mcp_client import ProcessState
+from access import requires_confirmation
+from tools import Tool
 
 HistoryKey = tuple[int | str, int | str]
 SendConfirmation = Callable[[Any], Awaitable[bool]]
@@ -44,6 +55,22 @@ CHALLENGE_INSTRUCTIONS = {
     "girar_derecha": "Gira el rostro hacia la derecha.",
     "acercar_rostro": "Acerca el rostro a la cámara.",
 }
+
+CONFIRMATION_TIMEOUT_SECONDS = 60
+CONFIRMATION_TOOLS = frozenset({"solicitar_supletorio", "registrar_nota"})
+
+
+@dataclass
+class PendingConfirmation:
+    identifier: str
+    chat_id: int | str
+    telegram_user_id: int | str
+    session_id: str
+    tool_name: str
+    arguments: dict[str, Any]
+    future: asyncio.Future[bool]
+    expires_at: float
+    resolved: bool = False
 
 
 class ConversationHistory:
@@ -83,6 +110,8 @@ class TelegramBot:
     _login_versions: defaultdict[str, int] = field(
         default_factory=lambda: defaultdict(int), init=False
     )
+    _confirmations: dict[str, PendingConfirmation] = field(default_factory=dict, init=False)
+    _confirmation_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
 
     def _identity(self, update: Update) -> tuple[int | str, int | str] | None:
         user = update.effective_user
@@ -131,6 +160,145 @@ class TelegramBot:
         self.session_manager.audit.record(
             telegram_user_id=user_id, event=event, reason=reason
         )
+
+    @staticmethod
+    def _confirmation_text(tool: Tool, arguments: dict[str, Any]) -> str | None:
+        if tool.name == "solicitar_supletorio":
+            fields = ("parcial", "causa")
+        elif tool.name == "registrar_nota":
+            fields = ("codigo", "evaluacion", "valor")
+        else:
+            return None
+        if any(field not in arguments for field in fields):
+            return None
+        details = "\n".join(f"- {field}: {arguments[field]}" for field in fields)
+        return f"Confirma la operación `{tool.name}`:\n{details}"
+
+    async def _confirm_for(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, tool: Tool, arguments: dict[str, Any]
+    ) -> bool:
+        identity = self._identity(update)
+        if identity is None or not requires_confirmation(tool.name) or tool.name not in CONFIRMATION_TOOLS:
+            return False
+        chat_id, user_id = identity
+        session = self.session_manager.get_active_session(user_id)
+        if session is None:
+            return False
+        text = self._confirmation_text(tool, arguments)
+        if text is None:
+            return False
+        identifier = secrets.token_urlsafe(9)
+        future = asyncio.get_running_loop().create_future()
+        pending = PendingConfirmation(
+            identifier,
+            chat_id,
+            user_id,
+            session.session_id,
+            tool.name,
+            dict(arguments),
+            future,
+            asyncio.get_running_loop().time() + CONFIRMATION_TIMEOUT_SECONDS,
+        )
+        async with self._confirmation_lock:
+            self._confirmations[identifier] = pending
+        markup = InlineKeyboardMarkup(
+            [[
+                InlineKeyboardButton("Confirmar", callback_data=f"confirm:yes:{identifier}"),
+                InlineKeyboardButton("Rechazar", callback_data=f"confirm:no:{identifier}"),
+            ]]
+        )
+        try:
+            message = update.effective_message
+            if message is None:
+                raise RuntimeError("No existe un mensaje de Telegram.")
+            await message.reply_text(text, reply_markup=markup)
+            self._audit(user_id, "confirmacion_solicitada", tool.name)
+        except Exception:
+            await self._resolve_confirmation(identifier, False, "confirmacion_rechazada")
+            return False
+        try:
+            return await asyncio.wait_for(asyncio.shield(future), CONFIRMATION_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            await self._resolve_confirmation(identifier, False, "confirmacion_vencida")
+            return False
+        finally:
+            async with self._confirmation_lock:
+                self._confirmations.pop(identifier, None)
+
+    async def confirmation_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        query = update.callback_query
+        if query is None:
+            return
+        try:
+            data = query.data or ""
+            prefix, decision, identifier = data.split(":", 2)
+            if prefix != "confirm" or decision not in {"yes", "no"} or not identifier:
+                return
+            async with self._confirmation_lock:
+                pending = self._confirmations.get(identifier)
+                if pending is None or pending.resolved:
+                    return
+                sender = query.from_user
+                callback_message = query.message
+                sender_id = None if sender is None else sender.id
+                callback_chat_id = None if callback_message is None else callback_message.chat.id
+                if sender_id != pending.telegram_user_id or callback_chat_id != pending.chat_id:
+                    self._audit(sender_id or "unknown", "callback_no_autorizado")
+                    return
+                if asyncio.get_running_loop().time() >= pending.expires_at:
+                    pending.resolved = True
+                    pending.future.set_result(False)
+                    self._audit(sender_id, "confirmacion_vencida", pending.tool_name)
+                    return
+                session = self.session_manager.get_active_session(sender_id)
+                if session is None or session.session_id != pending.session_id:
+                    pending.resolved = True
+                    pending.future.set_result(False)
+                    return
+                pending.resolved = True
+                pending.future.set_result(decision == "yes")
+                self._audit(
+                    sender_id,
+                    "confirmacion_aprobada" if decision == "yes" else "confirmacion_rechazada",
+                    pending.tool_name,
+                )
+            if callback_message is not None:
+                try:
+                    await query.edit_message_reply_markup(reply_markup=None)
+                except Exception:
+                    pass
+        finally:
+            try:
+                await query.answer()
+            except Exception:
+                pass
+
+    async def _resolve_confirmation(
+        self, identifier: str, result: bool, event: str
+    ) -> None:
+        async with self._confirmation_lock:
+            pending = self._confirmations.get(identifier)
+            if pending is None or pending.resolved:
+                return
+            pending.resolved = True
+            pending.future.set_result(result)
+            self._audit(pending.telegram_user_id, event, pending.tool_name)
+
+    async def cancel_confirmations(
+        self, *, telegram_user_id: int | str | None = None, session_id: str | None = None,
+        event: str = "confirmacion_cancelada",
+    ) -> None:
+        async with self._confirmation_lock:
+            identifiers = [
+                identifier
+                for identifier, pending in self._confirmations.items()
+                if (telegram_user_id is None or pending.telegram_user_id == telegram_user_id)
+                and (session_id is None or pending.session_id == session_id)
+            ]
+        for identifier in identifiers:
+            await self._resolve_confirmation(identifier, False, event)
 
     async def login(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
@@ -279,6 +447,11 @@ class TelegramBot:
             if self.liveness is not None:
                 self.liveness.invalidate_for_user(user_id)
             session = self.session_manager.get_active_session(user_id)
+            await self.cancel_confirmations(
+                telegram_user_id=user_id,
+                session_id=None if session is None else session.session_id,
+                event="confirmacion_cancelada_logout",
+            )
             if session is not None:
                 self.session_manager.logout(user_id)
                 await self.mcp_manager.close_session(session.session_id)
@@ -301,6 +474,9 @@ class TelegramBot:
                 self.history.get(identity),
                 self.mode,
                 telegram_user_id=identity[1],
+                confirm=lambda tool, arguments: self._confirm_for(
+                    update, context, tool, arguments
+                ),
             )
         except Exception:
             await self._reply(update, "No pude procesar tu consulta en este momento.")
@@ -316,6 +492,7 @@ class TelegramBot:
         self.started = True
 
     async def shutdown(self, application: Application) -> None:
+        await self.cancel_confirmations(event="confirmacion_cancelada_apagado")
         if self.started:
             await self.mcp_manager.close_all()
             self.started = False
@@ -326,6 +503,7 @@ class TelegramBot:
         application.add_handler(CommandHandler("login", self.login))
         application.add_handler(CommandHandler("logout", self.logout))
         application.add_handler(CommandHandler("ayuda", self.help))
+        application.add_handler(CallbackQueryHandler(self.confirmation_callback, pattern=r"^confirm:"))
         application.add_handler(MessageHandler(filters.VIDEO_NOTE, self.video_note))
         application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, self.video_note))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.text))

@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from liveness import ChallengeManager, LivenessResult
 from mcp_client import ProcessState
 from prompts import AGENT_SYSTEM_PROMPT, PERSONALIZATION_NAME
 from sessions import Session
+from tools import Tool
 
 
 class FakeMessage:
@@ -15,8 +17,9 @@ class FakeMessage:
         self.text = text
         self.replies = []
 
-    async def reply_text(self, text):
+    async def reply_text(self, text, **kwargs):
         self.replies.append(text)
+        self.reply_markup = kwargs.get("reply_markup")
 
 
 class FakeUpdate:
@@ -76,6 +79,26 @@ class FakeMCP:
         self.closed += 1
 
 
+class FakeCallbackQuery:
+    def __init__(self, data, user_id, chat_id):
+        self.data = data
+        self.from_user = SimpleNamespace(id=user_id)
+        self.message = SimpleNamespace(chat=SimpleNamespace(id=chat_id))
+        self.answered = 0
+        self.edited = 0
+
+    async def answer(self):
+        self.answered += 1
+
+    async def edit_message_reply_markup(self, reply_markup=None):
+        self.edited += 1
+
+
+class FakeCallbackUpdate:
+    def __init__(self, query):
+        self.callback_query = query
+
+
 class FakeLiveness:
     def __init__(self, challenges, result):
         self.challenges = challenges
@@ -117,6 +140,17 @@ def make_login_bot(result=None):
     liveness = FakeLiveness(challenges, result or LivenessResult(False, "no", "fail"))
     bot = TelegramBot(FakeOrchestrator(), sessions, FakeMCP(), liveness=liveness)
     return bot, sessions, liveness
+
+
+def write_tool(name="solicitar_supletorio"):
+    return Tool(
+        name=name,
+        description="write",
+        parameters={},
+        run=lambda arguments: None,
+        read_only=False,
+        origin="mcp",
+    )
 
 
 @pytest.mark.asyncio
@@ -334,3 +368,106 @@ async def test_mcp_failure_invalidates_created_session():
     await bot.video_note(update, Context())
     assert "completar" in update.effective_message.replies[-1]
     assert bot.mcp_manager.authenticated == []
+
+
+@pytest.mark.asyncio
+async def test_confirmation_sends_opaque_buttons_and_confirm_resolves_true():
+    session = Session("1", "Ana", "estudiante", "S-1", None, None, "sid-confirm")
+    bot, sessions, _ = make_login_bot()
+    sessions.session = session
+    update = FakeUpdate(1, 10, "consulta")
+    task = asyncio.create_task(
+        bot._confirm_for(
+            update,
+            SimpleNamespace(),
+            write_tool(),
+            {"parcial": "parcial_1", "causa": "fuerza mayor"},
+        )
+    )
+    while not bot._confirmations:
+        await asyncio.sleep(0)
+    identifier, pending = next(iter(bot._confirmations.items()))
+    markup = update.effective_message.reply_markup
+    callback_data = markup.inline_keyboard[0][0].callback_data
+    assert identifier in callback_data
+    assert "fuerza mayor" not in callback_data
+    await bot.confirmation_callback(
+        FakeCallbackUpdate(FakeCallbackQuery(callback_data, 1, 10)),
+        SimpleNamespace(),
+    )
+    assert await task is True
+
+
+@pytest.mark.asyncio
+async def test_reject_timeout_and_wrong_identity_do_not_approve():
+    session = Session("1", "Ana", "estudiante", "S-1", None, None, "sid-confirm")
+    bot, sessions, _ = make_login_bot()
+    sessions.session = session
+    update = FakeUpdate(1, 10, "consulta")
+    task = asyncio.create_task(
+        bot._confirm_for(
+            update, SimpleNamespace(), write_tool(),
+            {"parcial": "p1", "causa": "causa"},
+        )
+    )
+    while not bot._confirmations:
+        await asyncio.sleep(0)
+    identifier = next(iter(bot._confirmations))
+    query = FakeCallbackQuery(f"confirm:yes:{identifier}", 2, 10)
+    await bot.confirmation_callback(FakeCallbackUpdate(query), SimpleNamespace())
+    assert not task.done()
+    await bot.cancel_confirmations(telegram_user_id=1)
+    assert await task is False
+    assert query.answered == 1
+
+
+@pytest.mark.asyncio
+async def test_two_confirmations_are_independent_and_double_callback_wins_once():
+    session = Session("1", "Ana", "estudiante", "S-1", None, None, "sid-confirm")
+    bot, sessions, _ = make_login_bot()
+    sessions.session = session
+    first_update = FakeUpdate(1, 10, "a")
+    second_update = FakeUpdate(1, 10, "b")
+    first = asyncio.create_task(
+        bot._confirm_for(first_update, SimpleNamespace(), write_tool(),
+                         {"parcial": "p1", "causa": "a"})
+    )
+    second = asyncio.create_task(
+        bot._confirm_for(second_update, SimpleNamespace(), write_tool(),
+                         {"parcial": "p2", "causa": "b"})
+    )
+    while len(bot._confirmations) < 2:
+        await asyncio.sleep(0)
+    identifiers = list(bot._confirmations)
+    await bot.confirmation_callback(
+        FakeCallbackUpdate(FakeCallbackQuery(f"confirm:yes:{identifiers[0]}", 1, 10)),
+        SimpleNamespace(),
+    )
+    await bot.confirmation_callback(
+        FakeCallbackUpdate(FakeCallbackQuery(f"confirm:no:{identifiers[0]}", 1, 10)),
+        SimpleNamespace(),
+    )
+    await bot.confirmation_callback(
+        FakeCallbackUpdate(FakeCallbackQuery(f"confirm:no:{identifiers[1]}", 1, 10)),
+        SimpleNamespace(),
+    )
+    assert await first is True
+    assert await second is False
+
+
+@pytest.mark.asyncio
+async def test_logout_and_shutdown_cancel_pending_confirmations():
+    session = Session("1", "Ana", "estudiante", "S-1", None, None, "sid-confirm")
+    bot, sessions, _ = make_login_bot()
+    sessions.session = session
+    task = asyncio.create_task(
+        bot._confirm_for(
+            FakeUpdate(1, 10, "consulta"), SimpleNamespace(), write_tool(),
+            {"parcial": "p1", "causa": "causa"},
+        )
+    )
+    while not bot._confirmations:
+        await asyncio.sleep(0)
+    await bot.logout(FakeUpdate(1, 10), SimpleNamespace())
+    assert await task is False
+    assert not bot._confirmations
