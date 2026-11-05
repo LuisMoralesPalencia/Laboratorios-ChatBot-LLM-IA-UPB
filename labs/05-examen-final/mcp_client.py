@@ -27,11 +27,12 @@ from mcp_identity import (
 )
 from access import allowed_tools, requires_confirmation
 from sessions import Session, UserRepository
-from tools import Tool, ToolExecutionError, confirmation_token_var
+from tools import LOCAL_TOOLS, Tool, ToolExecutionError, confirmation_token_var
 
 SERVER_SCRIPT = Path(__file__).resolve().parent / "mcp_server.py"
 USERS_PATH = Path(__file__).resolve().parent / "data" / "usuarios.json"
 SESSION_META_KEY = "com.upb.exam/session-token"
+LOCAL_TOOL_NAMES = frozenset(tool.name for tool in LOCAL_TOOLS)
 _ENV_KEYS = ("PATH", "SystemRoot", "TEMP", "TMP", "PYTHONPATH")
 
 
@@ -243,7 +244,7 @@ class MCPClientManager:
                 ),
             )
             for mcp_tool in listed.tools
-            if mcp_tool.name in permitted
+            if mcp_tool.name in permitted and mcp_tool.name not in LOCAL_TOOL_NAMES
         ]
 
     async def close_session(self, session_id: str) -> None:
@@ -404,7 +405,7 @@ async def load_mcp_tools(
     return [
         to_tool(client, mcp_tool, session_token)
         for mcp_tool in listed.tools
-        if mcp_tool.name in permitted
+        if mcp_tool.name in permitted and mcp_tool.name not in LOCAL_TOOL_NAMES
     ]
 
 

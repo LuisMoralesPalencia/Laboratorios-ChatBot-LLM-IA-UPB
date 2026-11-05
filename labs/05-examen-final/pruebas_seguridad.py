@@ -22,7 +22,6 @@ from mcp_client import MCPClientManager
 from orchestrator import Orchestrator
 from rag import CourseRAG
 from sessions import SessionManager, UserRepository
-from tools import LOCAL_TOOLS
 from vector_store import SearchResult
 
 LAB_DIR = Path(__file__).resolve().parent
@@ -119,26 +118,6 @@ class Harness:
     sessions_by_role: dict[str, Any]
 
 
-class FilteredManager:
-    """Adaptador de prueba que evita duplicar tools locales ya compuestas por Orchestrator."""
-
-    def __init__(self, manager: MCPClientManager):
-        self.manager = manager
-
-    async def get_or_create_public(self):
-        return await self.manager.get_or_create_public()
-
-    async def get_or_create_authenticated(self, session, *, session_id: str):
-        return await self.manager.get_or_create_authenticated(session, session_id=session_id)
-
-    async def load_tools(self, session_id=None):
-        local_names = {tool.name for tool in LOCAL_TOOLS}
-        return [
-            tool for tool in await self.manager.load_tools(session_id)
-            if tool.name not in local_names
-        ]
-
-
 def _harness(tmp: Path) -> Harness:
     users = UserRepository.from_json(LAB_DIR / "data" / "usuarios.json")
     sessions = SessionManager(users, AuditLogger(tmp / "audit.jsonl"), session_minutes=10)
@@ -174,7 +153,7 @@ async def _answer(
         ),
         [],
         session_manager=harness.sessions,
-        mcp_manager=FilteredManager(harness.manager),
+        mcp_manager=harness.manager,
     )
     answer = await orchestrator.answer(
         question, [], "agente", telegram_user_id=user_id
