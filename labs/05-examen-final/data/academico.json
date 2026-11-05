@@ -16,13 +16,13 @@
       "notas": {"parcial_1": 4.7, "parcial_2": null, "laboratorios": [4.8, 4.6, 4.9, 4.7], "proyecto": null},
       "observaciones_docente": "Solicitó revisión de la nota del laboratorio 2; la nota no cambió."
     },
-    "<CODIGO_1>": {
-      "nombre": "<INTEGRANTE_1>",
+    "<000550926>": {
+      "nombre": "Jhostyn Santiago",
       "notas": {"parcial_1": 3.9, "parcial_2": null, "laboratorios": [4.0, 3.8, 4.2, 4.1], "proyecto": null},
       "observaciones_docente": "Participación destacada en los laboratorios de la unidad 5."
     },
-    "<CODIGO_2>": {
-      "nombre": "<INTEGRANTE_2>",
+    "<000550092>": {
+      "nombre": "Luis Eduardo",
       "notas": {"parcial_1": 3.5, "parcial_2": null, "laboratorios": [3.6, 3.9, 3.7, 4.0], "proyecto": null},
       "observaciones_docente": "Sin novedades."
     }

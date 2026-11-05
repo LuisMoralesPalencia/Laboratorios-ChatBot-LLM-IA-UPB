@@ -50,6 +50,13 @@ class RAGSettings:
     min_score: float  # similitud mínima para considerar relevante un fragmento
 
 
+@dataclass(frozen=True)
+class SessionSettings:
+    session_minutes: int
+    login_max_attempts: int
+    login_block_minutes: int
+
+
 def load_settings() -> Settings:
     # Busca el archivo .env desde el directorio actual hacia arriba.
     load_dotenv(find_dotenv(usecwd=True))
@@ -96,3 +103,17 @@ def load_rag_settings() -> RAGSettings:
         top_k=int(os.getenv("RAG_TOP_K", "4")),
         min_score=float(os.getenv("RAG_MIN_SCORE", "0.35")),
     )
+
+
+def load_session_settings() -> SessionSettings:
+    load_dotenv(find_dotenv(usecwd=True))
+    session_minutes = int(os.getenv("SESSION_MINUTES", "10"))
+    login_max_attempts = int(os.getenv("LOGIN_MAX_ATTEMPTS", "3"))
+    login_block_minutes = int(os.getenv("LOGIN_BLOCK_MINUTES", "15"))
+    if session_minutes <= 0:
+        raise ValueError("SESSION_MINUTES debe ser mayor que 0.")
+    if login_max_attempts <= 0:
+        raise ValueError("LOGIN_MAX_ATTEMPTS debe ser mayor que 0.")
+    if login_block_minutes <= 0:
+        raise ValueError("LOGIN_BLOCK_MINUTES debe ser mayor que 0.")
+    return SessionSettings(session_minutes, login_max_attempts, login_block_minutes)
