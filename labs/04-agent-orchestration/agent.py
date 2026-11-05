@@ -71,22 +71,34 @@ class Agent:
         steps: list[AgentStep] = []
 
         for _ in range(self.max_steps):
-            # TODO 2: un paso del ciclo. Parte de lo que hiciste en el Lab 03 (assistant.py), pero repetido:
-            #   a. Llama al LLM con messages y las definiciones (tools=definitions).
-            #   b. Si la respuesta NO trae tool_calls, es la respuesta final: agrega AgentStep(response)
-            #      a steps y devuelve AgentAnswer(response.text, steps, messages, stopped_by_limit=False).
-            #   c. Si trae tool_calls: agrega a messages response.as_message(); crea step = AgentStep(response);
-            #      ejecuta cada call con await self.execute(call), guarda el ToolRun en step.tool_runs y
-            #      agrega el mensaje {"role": "tool", "tool_call_id": ..., "content": ...}. Agrega step a steps.
-            #   Luego el for vuelve a llamar al LLM, que ahora ve los resultados.
-            raise NotImplementedError("Completa el ciclo del agente")
+            # TODO 2: un paso del ciclo.
+            # (Corregido: self.llm.chat no lleva await)
+            response = self.llm.chat(messages, tools=definitions)
+            
+            if not response.tool_calls:
+                steps.append(AgentStep(response))
+                return AgentAnswer(response.text, steps, messages, stopped_by_limit=False)
+            
+            messages.append(response.as_message())
+            step = AgentStep(response)
+            
+            for call in response.tool_calls:
+                tool_run = await self.execute(call)
+                step.tool_runs.append(tool_run)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": tool_run.result
+                })
+            
+            steps.append(step)
 
-        # TODO 3: se agotaron los pasos y el modelo sigue pidiendo tools. Fuerza una respuesta final:
-        #   - agrega a messages un mensaje {"role": "user", "content": LIMIT_MESSAGE};
-        #   - llama al LLM con tools=definitions y allow_tools=False (ya no puede pedir más tools);
-        #   - agrega AgentStep(final) a steps y devuelve AgentAnswer(..., stopped_by_limit=True).
-        #   Prueba sin el aviso LIMIT_MESSAGE: ¿qué texto devuelve el modelo?
-        raise NotImplementedError("Completa el límite de pasos")
+        # TODO 3: se agotaron los pasos y el modelo sigue pidiendo tools. Fuerza una respuesta final.
+        messages.append({"role": "user", "content": LIMIT_MESSAGE})
+        # (Corregido: self.llm.chat no lleva await)
+        final_response = self.llm.chat(messages, tools=definitions, allow_tools=False)
+        steps.append(AgentStep(final_response))
+        return AgentAnswer(final_response.text, steps, messages, stopped_by_limit=True)
 
     async def execute(self, call: ToolCall) -> ToolRun:
         """Ejecuta una tool pedida por el modelo (igual que en el Lab 03)."""

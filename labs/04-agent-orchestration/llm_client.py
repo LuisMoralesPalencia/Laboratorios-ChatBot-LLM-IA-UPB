@@ -105,6 +105,11 @@ class LLMClient:
         except openai.APIError as exc:
             raise LLMError(f"Error del proveedor {self.settings.provider}: {exc}") from exc
 
+        if completion is None or not getattr(completion, "choices", None):
+            raise LLMError(
+                f"El proveedor {self.settings.provider} devolvió una respuesta vacía (posible límite de tasa / rate limit)."
+            )
+
         choice = completion.choices[0]
         usage = completion.usage
         return LLMResponse(
