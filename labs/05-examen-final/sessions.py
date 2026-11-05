@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
+import uuid
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -109,6 +110,7 @@ class Session:
     student_code: str | None
     created_at: datetime
     expires_at: datetime
+    session_id: str = ""
 
     def is_active(self, now: datetime) -> bool:
         return now < self.expires_at
@@ -194,6 +196,7 @@ class SessionManager:
             student_code=user.student_code,
             created_at=now,
             expires_at=now + timedelta(minutes=self.session_minutes),
+            session_id=str(uuid.uuid4()),
         )
         self._sessions[normalized] = session
         self._failed_attempts.pop(normalized, None)

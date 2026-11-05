@@ -81,9 +81,31 @@ class SessionTests(unittest.TestCase):
 
     def test_creates_and_recovers_only_the_correct_session(self):
         session = self.manager.create_authenticated_session(101, similarity=0.91)
+        self.assertTrue(session.session_id)
+        self.assertNotEqual(session.session_id, session.telegram_user_id)
         self.assertEqual(self.manager.get_active_session(101), session)
         self.assertIsNone(self.manager.get_active_session(202))
         self.assertEqual(effective_role(session, self.clock()), "estudiante")
+
+    def test_session_id_is_stable_active_and_unique_per_login(self):
+        first = self.manager.create_authenticated_session(101)
+        self.assertEqual(self.manager.get_active_session(101).session_id, first.session_id)
+        second = self.manager.create_authenticated_session(101)
+        teacher = self.manager.create_authenticated_session(202)
+        self.assertNotEqual(first.session_id, second.session_id)
+        self.assertNotEqual(first.session_id, teacher.session_id)
+        self.assertNotEqual(second.session_id, teacher.session_id)
+        self.assertNotEqual(first.session_id, first.telegram_user_id)
+        self.assertNotEqual(teacher.session_id, teacher.telegram_user_id)
+
+    def test_logout_and_expiration_remove_session_with_its_identifier(self):
+        session = self.manager.create_authenticated_session(101)
+        self.manager.logout(101)
+        self.assertIsNone(self.manager.get_active_session(101))
+        replacement = self.manager.create_authenticated_session(101)
+        self.assertNotEqual(session.session_id, replacement.session_id)
+        self.clock.advance(minutes=10)
+        self.assertIsNone(self.manager.get_active_session(101))
 
     def test_expiration_and_logout_return_public_access(self):
         session = self.manager.create_authenticated_session(101)
