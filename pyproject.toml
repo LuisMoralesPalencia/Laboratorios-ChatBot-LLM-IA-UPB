@@ -13,4 +13,5 @@ dependencies = [
     "mcp>=2.2,<3",         # Lab 03: SDK oficial de MCP (servidor y cliente; la API 2.x difiere de la 1.x)
     "python-telegram-bot>=22.8",
     "opencv-python>=5.0.0.93",
+    "pyjwt[crypto]>=2.15.1",
 ]

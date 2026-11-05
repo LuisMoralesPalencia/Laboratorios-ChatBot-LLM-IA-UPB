@@ -23,6 +23,7 @@ dependencies = [
     { name = "openai" },
     { name = "opencv-python" },
     { name = "pydantic" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "python-dotenv" },
     { name = "python-telegram-bot" },
 ]
@@ -35,6 +36,7 @@ requires-dist = [
     { name = "openai", specifier = ">=1.40" },
     { name = "opencv-python", specifier = ">=5.0.0.93" },
     { name = "pydantic", specifier = ">=2.7" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.15.1" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "python-telegram-bot", specifier = ">=22.8" },
 ]
