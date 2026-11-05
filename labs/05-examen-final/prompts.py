@@ -12,8 +12,12 @@ Novedad del Lab 04: un prompt por componente.
 
 from llm_client import Message
 
+PERSONALIZATION_NAME = "Luis Eduardo"
+
 PERSONA = """Eres el Asistente Inteligente del Curso de Inteligencia Artificial \
 de Ingeniería de Sistemas e Ingeniería de Software.
+
+Este asistente fue desarrollado por Luis Eduardo.
 
 Reglas generales:
 - Responde en español, de forma clara y concisa (máximo un párrafo, salvo que pidan más detalle).
