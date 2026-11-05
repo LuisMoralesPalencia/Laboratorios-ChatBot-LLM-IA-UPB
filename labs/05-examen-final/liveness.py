@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import secrets
+from threading import RLock
 from pathlib import Path
-from typing import Callable, Iterator, Protocol
+from typing import Callable, Iterator, Protocol, TypeVar
 from uuid import uuid4
 
 import cv2
@@ -18,6 +19,7 @@ from sessions import Session, SessionError, SessionManager, TelegramUserId
 
 Clock = Callable[[], datetime]
 RandomSource = Callable[[list[str]], str]
+Completion = TypeVar("Completion")
 
 
 class VideoCaptureLike(Protocol):
@@ -66,6 +68,9 @@ class ChallengeManager:
         self.id_source = id_source or (lambda: uuid4().hex)
         self._challenges: dict[str, LivenessChallenge] = {}
         self._used: set[str] = set()
+        self._invalidated: set[str] = set()
+        self._lock = RLock()
+        self._pending_by_user: dict[str, set[str]] = {}
 
     def _now(self) -> datetime:
         current = self.clock()
@@ -76,29 +81,75 @@ class ChallengeManager:
         )
 
     def issue(self, telegram_user_id: TelegramUserId) -> LivenessChallenge:
-        issued_at = self._now()
-        challenge = LivenessChallenge(
-            challenge_id=self.id_source(),
-            telegram_user_id=str(telegram_user_id).strip(),
-            action=self.random_source(list(CHALLENGES)),
-            issued_at=issued_at,
-            expires_at=issued_at + timedelta(seconds=self.timeout_seconds),
-        )
-        self._challenges[challenge.challenge_id] = challenge
-        return challenge
+        normalized_id = str(telegram_user_id).strip()
+        with self._lock:
+            self._invalidated.update(
+                challenge_id
+                for challenge_id, challenge in self._challenges.items()
+                if challenge.telegram_user_id == normalized_id
+            )
+            issued_at = self._now()
+            challenge = LivenessChallenge(
+                challenge_id=self.id_source(),
+                telegram_user_id=normalized_id,
+                action=self.random_source(list(CHALLENGES)),
+                issued_at=issued_at,
+                expires_at=issued_at + timedelta(seconds=self.timeout_seconds),
+            )
+            self._challenges[challenge.challenge_id] = challenge
+            self._pending_by_user[normalized_id] = {challenge.challenge_id}
+            return challenge
 
     def consume(self, challenge_id: str, telegram_user_id: TelegramUserId) -> LivenessChallenge:
-        challenge = self._challenges.get(challenge_id)
         normalized_id = str(telegram_user_id).strip()
-        if challenge is None or challenge.challenge_id in self._used:
-            raise ChallengeError("reto_invalido")
-        if challenge.telegram_user_id != normalized_id:
-            raise ChallengeError("reto_no_corresponde")
-        if self._now() >= challenge.expires_at:
+        with self._lock:
+            challenge = self._challenges.get(challenge_id)
+            if (
+                challenge is None
+                or challenge.challenge_id in self._used
+                or challenge.challenge_id in self._invalidated
+            ):
+                raise ChallengeError("reto_invalido")
+            if challenge.telegram_user_id != normalized_id:
+                raise ChallengeError("reto_no_corresponde")
+            if self._now() >= challenge.expires_at:
+                self._used.add(challenge.challenge_id)
+                self._pending_by_user.get(normalized_id, set()).discard(challenge_id)
+                raise ChallengeError("reto_vencido")
             self._used.add(challenge.challenge_id)
-            raise ChallengeError("reto_vencido")
-        self._used.add(challenge.challenge_id)
-        return challenge
+            self._pending_by_user.get(normalized_id, set()).discard(challenge_id)
+            return challenge
+
+    def invalidate_for_user(self, telegram_user_id: TelegramUserId) -> None:
+        """Invalida retos pendientes o en procesamiento del usuario indicado."""
+        normalized_id = str(telegram_user_id).strip()
+        with self._lock:
+            challenge_ids = {
+                challenge_id
+                for challenge_id, challenge in self._challenges.items()
+                if challenge.telegram_user_id == normalized_id
+            }
+            self._invalidated.update(challenge_ids)
+            self._pending_by_user.pop(normalized_id, None)
+
+    def complete(
+        self,
+        challenge_id: str,
+        telegram_user_id: TelegramUserId,
+        operation: Callable[[], Completion],
+    ) -> Completion:
+        """Ejecuta una operación final solo si el reto no fue invalidado."""
+        normalized_id = str(telegram_user_id).strip()
+        with self._lock:
+            challenge = self._challenges.get(challenge_id)
+            if (
+                challenge is None
+                or challenge.telegram_user_id != normalized_id
+                or challenge_id not in self._used
+                or challenge_id in self._invalidated
+            ):
+                raise ChallengeError("reto_invalidado")
+            return operation()
 
 
 @dataclass(frozen=True)
@@ -156,6 +207,9 @@ class LivenessService:
         self.turn_threshold = settings.turn_threshold
         self.approach_ratio = settings.approach_ratio
         self.continuity_threshold = settings.continuity_threshold
+
+    def invalidate_for_user(self, telegram_user_id: TelegramUserId) -> None:
+        self.challenges.invalidate_for_user(telegram_user_id)
 
     def _failure(
         self,
@@ -331,10 +385,14 @@ class LivenessService:
                 analyzed_frames=len(observations)
             )
         try:
-            session = self.sessions.create_authenticated_session(
-                metadata.telegram_user_id, similarity=frontal.similarity
+            session = self.challenges.complete(
+                challenge.challenge_id,
+                metadata.telegram_user_id,
+                lambda: self.sessions.create_authenticated_session(
+                    metadata.telegram_user_id, similarity=frontal.similarity
+                ),
             )
-        except SessionError:
+        except (ChallengeError, SessionError):
             return LivenessResult(
                 False, "no_se_pudo_verificar", "sesion_no_creada",
                 challenge=challenge, analyzed_frames=len(observations),

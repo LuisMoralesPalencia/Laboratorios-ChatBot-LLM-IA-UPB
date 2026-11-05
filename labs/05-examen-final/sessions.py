@@ -146,15 +146,21 @@ class SessionManager:
             return current.replace(tzinfo=timezone.utc)
         return current.astimezone(timezone.utc)
 
-    def _is_blocked(self, user_id: str, now: datetime) -> bool:
+    def _is_blocked(self, user_id: str, now: datetime, *, reset_attempts: bool = True) -> bool:
         blocked_until = self._blocked_until.get(user_id)
         if blocked_until is None:
             return False
         if now >= blocked_until:
             del self._blocked_until[user_id]
-            self._failed_attempts.pop(user_id, None)
+            if reset_attempts:
+                self._failed_attempts.pop(user_id, None)
             return False
         return True
+
+    def is_blocked(self, telegram_user_id: TelegramUserId) -> bool:
+        """Indica si el usuario mantiene un bloqueo temporal vigente."""
+        normalized = _normalize_telegram_user_id(telegram_user_id)
+        return self._is_blocked(normalized, self._now(), reset_attempts=False)
 
     def get_active_session(self, telegram_user_id: TelegramUserId) -> Session | None:
         normalized = _normalize_telegram_user_id(telegram_user_id)

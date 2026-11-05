@@ -93,6 +93,41 @@ class LivenessTests(unittest.TestCase):
         with self.assertRaises(ChallengeError):
             self.challenges.consume(challenge.challenge_id, 101)
 
+    def test_invalidates_only_pending_challenges_for_user(self):
+        ids = iter(("challenge-1", "challenge-2"))
+        manager = ChallengeManager(
+            timeout_seconds=60, clock=self.clock,
+            random_source=lambda values: values[0], id_source=lambda: next(ids),
+        )
+        first = manager.issue(101)
+        other = manager.issue(202)
+        manager.invalidate_for_user(101)
+        with self.assertRaises(ChallengeError):
+            manager.consume(first.challenge_id, 101)
+        self.assertEqual(manager.consume(other.challenge_id, 202), other)
+        manager.invalidate_for_user(101)
+        manager.invalidate_for_user(101)
+
+    def test_invalidated_challenge_cannot_complete_late(self):
+        challenge = self.challenges.issue(101)
+        self.challenges.consume(challenge.challenge_id, 101)
+        self.challenges.invalidate_for_user(101)
+        with self.assertRaises(ChallengeError):
+            self.challenges.complete(challenge.challenge_id, 101, lambda: "session")
+
+    def test_new_challenge_invalidates_previous_processing(self):
+        ids = iter(("challenge-1", "challenge-2"))
+        manager = ChallengeManager(
+            timeout_seconds=60, clock=self.clock,
+            random_source=lambda values: values[0], id_source=lambda: next(ids),
+        )
+        first = manager.issue(101)
+        manager.consume(first.challenge_id, 101)
+        second = manager.issue(101)
+        self.assertEqual(second.challenge_id, "challenge-2")
+        with self.assertRaises(ChallengeError):
+            manager.complete(first.challenge_id, 101, lambda: "late-session")
+
     def test_rejects_forwarded_photo_and_invalid_video(self):
         engine = Mock()
         service = LivenessService(
@@ -168,7 +203,9 @@ class LivenessTests(unittest.TestCase):
             VideoNoteMetadata(True, False, 101, video), challenge.challenge_id
         )
         self.assertTrue(result.accepted)
-        self.assertIsNotNone(self.sessions.get_active_session(101))
+        self.assertIsNotNone(result.session)
+        self.assertTrue(result.session.session_id)
+        self.assertEqual(self.sessions.get_active_session(101), result.session)
 
     def test_multiple_faces_cannot_create_session(self):
         enrollment_dir = Path(self.temp.name) / "rostros"

@@ -138,8 +138,20 @@ class SessionTests(unittest.TestCase):
     def test_block_expires_with_injected_clock(self):
         for _ in range(3):
             self.manager.record_failed_login(101, reason="fallo")
+        self.assertTrue(self.manager.is_blocked(101))
         self.clock.advance(minutes=15)
+        self.assertFalse(self.manager.is_blocked(101))
         self.assertIsNotNone(self.manager.create_authenticated_session(101))
+
+    def test_is_blocked_does_not_change_failed_attempts(self):
+        self.manager.record_failed_login(101, reason="fallo")
+        self.assertFalse(self.manager.is_blocked(101))
+        self.manager.record_failed_login(101, reason="fallo")
+        self.manager.record_failed_login(101, reason="fallo")
+        self.assertTrue(self.manager.is_blocked(101))
+        self.assertTrue(self.manager.is_blocked(101))
+        with self.assertRaises(SessionError):
+            self.manager.create_authenticated_session(101)
 
     def test_audit_records_required_events_without_biometrics(self):
         self.manager.create_authenticated_session(101, similarity=0.88)
