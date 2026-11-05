@@ -24,11 +24,18 @@ def test_public_process_only_exposes_resource_and_isolated_from_authenticated() 
             public = await manager.get_or_create_public()
             authenticated = await manager.get_or_create_authenticated(_session(), session_id="session-1")
             assert public is not authenticated
-            assert (await public.client.list_tools()).tools == []
+            assert {tool.name for tool in (await public.client.list_tools()).tools} == {
+                "fecha_actual",
+                "dias_hasta",
+                "calcular_nota_final",
+            }
             assert len((await public.client.read_resource("academico://calendario")).contents) == 1
             assert {tool.name for tool in (await authenticated.client.list_tools()).tools} == {
-                "consultar_notas",
-                "consultar_solicitudes",
+                "fecha_actual",
+                "dias_hasta",
+                "calcular_nota_final",
+                "consultar_mis_notas",
+                "consultar_mis_solicitudes",
                 "solicitar_supletorio",
             }
         finally:
@@ -43,7 +50,7 @@ def test_authenticated_call_transports_session_token_in_meta() -> None:
         manager = MCPClientManager(private_key, private_key.public_key())
         try:
             await manager.get_or_create_authenticated(_session(), session_id="session-1")
-            result = await manager.call_tool("session-1", "consultar_notas", {"codigo": "<000550926>"})
+            result = await manager.call_tool("session-1", "consultar_mis_notas")
             assert result.is_error is False
             assert "Jhostyn Santiago" in result.content[0].text
         finally:

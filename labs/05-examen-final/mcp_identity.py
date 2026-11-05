@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import hashlib
+import json
+import secrets
 from pathlib import Path
 from typing import Final
 
@@ -22,10 +25,13 @@ BOOTSTRAP_AUDIENCE: Final = "mcp-bootstrap"
 SESSION_AUDIENCE: Final = "mcp-tool-call"
 BOOTSTRAP_TYPE: Final = "bootstrap"
 SESSION_TYPE: Final = "session"
+CONFIRMATION_AUDIENCE: Final = "mcp-write-confirmation"
+CONFIRMATION_TYPE: Final = "confirmation"
 ALGORITHM: Final = "EdDSA"
 DEFAULT_ISSUER: Final = "upb-r6"
 DEFAULT_BOOTSTRAP_LIFETIME_SECONDS: Final = 30
 DEFAULT_SESSION_LIFETIME_SECONDS: Final = 600
+DEFAULT_CONFIRMATION_LIFETIME_SECONDS: Final = 60
 _REQUIRED_CLAIMS: Final[tuple[str, ...]] = (
     "iss",
     "aud",
@@ -52,6 +58,23 @@ class ProcessIdentityContext:
     jti: str
     role: Role
     codigo: str | None
+
+
+def canonical_arguments_hash(arguments: object) -> str:
+    """Calcula el hash estable de un objeto JSON de argumentos."""
+    if not isinstance(arguments, dict):
+        raise IdentityError("Los argumentos deben ser un objeto JSON.")
+    try:
+        encoded = json.dumps(
+            arguments,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise IdentityError("Los argumentos de la operación no son serializables.") from exc
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def load_private_key(path: Path) -> Ed25519PrivateKey:
@@ -136,6 +159,77 @@ def issue_session_token(
         now=now,
         lifetime_seconds=lifetime_seconds,
     )
+
+
+def issue_confirmation_token(
+    context: ProcessIdentityContext,
+    private_key: Ed25519PrivateKey,
+    *,
+    tool_name: str,
+    arguments: object,
+    issuer: str = DEFAULT_ISSUER,
+    now: datetime | None = None,
+    lifetime_seconds: int = DEFAULT_CONFIRMATION_LIFETIME_SECONDS,
+) -> str:
+    if not isinstance(tool_name, str) or not tool_name.strip():
+        raise IdentityError("Herramienta de confirmación inválida.")
+    if not isinstance(private_key, Ed25519PrivateKey):
+        raise IdentityError("La clave de emisión no es Ed25519.")
+    _validate_context_identifiers(context)
+    current = _as_utc(now or datetime.now(timezone.utc))
+    claims = {
+        "iss": issuer,
+        "aud": CONFIRMATION_AUDIENCE,
+        "typ": CONFIRMATION_TYPE,
+        "jti": secrets.token_urlsafe(24),
+        "sid": context.session_id,
+        "sub": context.telegram_user_id,
+        "session_jti": context.jti,
+        "tool_name": tool_name,
+        "arguments_hash": canonical_arguments_hash(arguments),
+        "iat": current,
+        "exp": current + timedelta(seconds=lifetime_seconds),
+    }
+    try:
+        return jwt.encode(claims, private_key, algorithm=ALGORITHM)
+    except (TypeError, ValueError) as exc:
+        raise IdentityError("No se pudo emitir el comprobante MCP.") from exc
+
+
+def verify_confirmation_token(
+    token: str,
+    public_key: Ed25519PublicKey,
+    *,
+    expected_context: ProcessIdentityContext,
+    tool_name: str,
+    arguments: object,
+    issuer: str = DEFAULT_ISSUER,
+    now: datetime | None = None,
+) -> str:
+    required = list(_REQUIRED_CLAIMS) + ["session_jti", "tool_name", "arguments_hash"]
+    try:
+        claims = jwt.decode(
+            token,
+            public_key,
+            algorithms=[ALGORITHM],
+            issuer=issuer,
+            audience=CONFIRMATION_AUDIENCE,
+            options={"require": required, "verify_exp": False, "verify_iat": False},
+        )
+    except (jwt.InvalidTokenError, TypeError, ValueError) as exc:
+        raise IdentityError("Comprobante MCP inválido.") from exc
+    if claims.get("typ") != CONFIRMATION_TYPE:
+        raise IdentityError("Propósito de comprobante MCP inválido.")
+    _validate_temporal_claims(claims, now)
+    if (
+        claims.get("sid") != expected_context.session_id
+        or claims.get("sub") != expected_context.telegram_user_id
+        or claims.get("session_jti") != expected_context.jti
+        or claims.get("tool_name") != tool_name
+        or claims.get("arguments_hash") != canonical_arguments_hash(arguments)
+    ):
+        raise IdentityError("El comprobante MCP no coincide con la operación.")
+    return _validate_identifier(claims["jti"], "jti")
 
 
 def verify_bootstrap(

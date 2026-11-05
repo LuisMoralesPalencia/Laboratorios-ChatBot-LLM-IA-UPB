@@ -6,6 +6,7 @@ import asyncio
 import os
 import secrets
 import sys
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -17,9 +18,16 @@ from mcp import Client, StdioServerParameters
 from mcp.types import CallToolResult
 from mcp.types import Tool as MCPTool
 
-from mcp_identity import ProcessIdentityContext, context_from_user, issue_bootstrap, issue_session_token
+from mcp_identity import (
+    ProcessIdentityContext,
+    context_from_user,
+    issue_bootstrap,
+    issue_confirmation_token,
+    issue_session_token,
+)
+from access import allowed_tools, requires_confirmation
 from sessions import Session, UserRepository
-from tools import Tool, ToolExecutionError
+from tools import Tool, ToolExecutionError, confirmation_token_var
 
 SERVER_SCRIPT = Path(__file__).resolve().parent / "mcp_server.py"
 USERS_PATH = Path(__file__).resolve().parent / "data" / "usuarios.json"
@@ -202,12 +210,16 @@ class MCPClientManager:
         session_id: str | None,
         tool_name: str,
         arguments: dict[str, Any] | None = None,
+        *,
+        confirmation_token: str | None = None,
     ) -> CallToolResult:
         handle = await self._handle_for(session_id)
         if handle.state is not ProcessState.ACTIVO:
             raise RuntimeError("El proceso MCP no está activo.")
         try:
-            meta = {SESSION_META_KEY: handle.session_token} if handle.session_token else None
+            meta = {SESSION_META_KEY: handle.session_token} if handle.session_token else {}
+            if confirmation_token is not None:
+                meta["com.upb.exam/confirmation-token"] = confirmation_token
             return await handle.client.call_tool(tool_name, arguments or {}, meta=meta)
         except Exception:
             if session_id is not None:
@@ -217,7 +229,22 @@ class MCPClientManager:
     async def load_tools(self, session_id: str | None = None) -> list[Tool]:
         handle = await self._handle_for(session_id)
         listed = await handle.client.list_tools()
-        return [to_tool(handle.client, mcp_tool, handle.session_token) for mcp_tool in listed.tools]
+        role = handle.context.role if handle.context else "publico"
+        permitted = allowed_tools(role)
+        return [
+            to_tool(
+                handle.client,
+                mcp_tool,
+                handle.session_token,
+                issue_confirmation=(
+                    _confirmation_factory(self.private_key, handle.context, mcp_tool.name)
+                    if requires_confirmation(mcp_tool.name)
+                    else None
+                ),
+            )
+            for mcp_tool in listed.tools
+            if mcp_tool.name in permitted
+        ]
 
     async def close_session(self, session_id: str) -> None:
         async with self._lock:
@@ -311,9 +338,18 @@ def result_to_text(result: CallToolResult) -> str:
     return text
 
 
-def to_tool(client: MCPClientProxy | Client, mcp_tool: MCPTool, session_token: str | None = None) -> Tool:
+def to_tool(
+    client: MCPClientProxy | Client,
+    mcp_tool: MCPTool,
+    session_token: str | None = None,
+    *,
+    issue_confirmation: Callable[[dict[str, Any]], Awaitable[str] | None] | None = None,
+) -> Tool:
     async def run(arguments: dict[str, Any]) -> str:
-        meta = {SESSION_META_KEY: session_token} if session_token else None
+        meta = {SESSION_META_KEY: session_token} if session_token else {}
+        confirmation_token = confirmation_token_var.get()
+        if confirmation_token is not None:
+            meta["com.upb.exam/confirmation-token"] = confirmation_token
         result = await client.call_tool(mcp_tool.name, arguments, meta=meta)
         return result_to_text(result)
 
@@ -325,12 +361,60 @@ def to_tool(client: MCPClientProxy | Client, mcp_tool: MCPTool, session_token: s
         run=run,
         read_only=bool(annotations and annotations.read_only_hint),
         origin=client.server_info.name if client.server_info else "mcp",
+        issue_confirmation=issue_confirmation,
     )
 
 
-async def load_mcp_tools(client: Client, session_token: str | None = None) -> list[Tool]:
+def _issue_confirmation(
+    private_key: Ed25519PrivateKey,
+    context: ProcessIdentityContext,
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> str:
+    return issue_confirmation_token(
+        context,
+        private_key,
+        tool_name=tool_name,
+        arguments=arguments,
+    )
+
+
+def _confirmation_factory(
+    private_key: Ed25519PrivateKey,
+    context: ProcessIdentityContext | None,
+    tool_name: str,
+) -> Callable[[dict[str, Any]], Awaitable[str]] | None:
+    if context is None:
+        return None
+
+    async def issue(arguments: dict[str, Any]) -> str:
+        return _issue_confirmation(private_key, context, tool_name, arguments)
+
+    return issue
+
+
+async def load_mcp_tools(
+    client: Client,
+    session_token: str | None = None,
+    *,
+    role: str = "publico",
+) -> list[Tool]:
     listed = await client.list_tools()
-    return [to_tool(client, mcp_tool, session_token) for mcp_tool in listed.tools]
+    permitted = allowed_tools(role)
+    return [
+        to_tool(client, mcp_tool, session_token)
+        for mcp_tool in listed.tools
+        if mcp_tool.name in permitted
+    ]
+
+
+async def open_client(
+    stack: AsyncExitStack,
+    parameters: StdioServerParameters | None = None,
+) -> Client:
+    """Compatibilidad para el orquestador: abre un cliente MCP público."""
+    client = Client(parameters or public_server_parameters(), raise_exceptions=True)
+    return await stack.enter_async_context(client)
 
 
 async def read_resource_text(client: Client, uri: str) -> str:

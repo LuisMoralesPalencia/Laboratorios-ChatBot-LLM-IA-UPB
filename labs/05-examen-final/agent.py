@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 from llm_client import LLMClient, LLMResponse, Message, ToolCall
 from prompts import build_agent_messages
-from tools import Tool
+from tools import Tool, confirmation_token_var
 
 MAX_STEPS = 5
 
@@ -57,7 +57,7 @@ class AgentAnswer:
 
 
 class Agent:
-    def __init__(self, llm: LLMClient, tools: list[Tool], confirm: ConfirmFn, max_steps: int = MAX_STEPS):
+    def __init__(self, llm: LLMClient, tools: list[Tool], confirm: ConfirmFn | None = None, max_steps: int = MAX_STEPS):
         self.llm = llm
         self.tools = {tool.name: tool for tool in tools}
         if len(self.tools) != len(tools):
@@ -111,11 +111,23 @@ class Agent:
             return ToolRun(call, "error", f"Error: {exc}")
 
         # Generar no es ejecutar: una acción con efectos solo se ejecuta si el usuario la autoriza.
-        if not tool.read_only and not await self.confirm(tool, arguments):
-            return ToolRun(call, "rechazada", REJECTED)
+        confirmation_token = None
+        if not tool.read_only:
+            if self.confirm is None or not await self.confirm(tool, arguments):
+                return ToolRun(call, "rechazada", REJECTED)
+            if tool.issue_confirmation is None:
+                return ToolRun(call, "rechazada", REJECTED)
+            try:
+                confirmation_token = await tool.issue_confirmation(arguments)
+            except Exception as exc:
+                return ToolRun(call, "error", f"Error: no se pudo emitir la confirmación ({exc}).")
 
         try:
-            result = await tool.run(arguments)
+            token = confirmation_token_var.set(confirmation_token)
+            try:
+                result = await tool.run(arguments)
+            finally:
+                confirmation_token_var.reset(token)
         except Exception as exc:  # argumentos inválidos, regla de negocio, servidor caído...
             return ToolRun(call, "error", f"Error: {exc}")
         return ToolRun(call, "ok", result)

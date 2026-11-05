@@ -15,6 +15,7 @@ Uso (sin LLM ni API key):
 """
 
 import asyncio
+import contextvars
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -22,6 +23,10 @@ from datetime import date
 from typing import Any
 
 from llm_client import ToolDefinition
+
+confirmation_token_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "mcp_confirmation_token", default=None
+)
 
 
 class ToolExecutionError(Exception):
@@ -36,6 +41,7 @@ class Tool:
     run: Callable[[dict[str, Any]], Awaitable[str]]  # ejecuta y devuelve el resultado como texto
     read_only: bool  # False = acción con efectos (crea, modifica, envía): requiere confirmación
     origin: str  # "local" o el nombre del servidor MCP
+    issue_confirmation: Callable[[dict[str, Any]], Awaitable[str]] | None = None
 
     def definition(self) -> ToolDefinition:
         return {"name": self.name, "description": self.description, "parameters": self.parameters}
