@@ -20,3 +20,5 @@ desktop.ini
 modelos/
 rostros/
 auditoria*.jsonl
+calibracion_manifest.json
+calibracion_far_frr.csv

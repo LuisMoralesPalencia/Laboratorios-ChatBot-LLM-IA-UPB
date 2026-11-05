@@ -57,6 +57,12 @@ class SessionSettings:
     login_block_minutes: int
 
 
+@dataclass(frozen=True)
+class FaceSettings:
+    match_threshold: float
+    dataset_dir: Path | None
+
+
 def load_settings() -> Settings:
     # Busca el archivo .env desde el directorio actual hacia arriba.
     load_dotenv(find_dotenv(usecwd=True))
@@ -117,3 +123,12 @@ def load_session_settings() -> SessionSettings:
     if login_block_minutes <= 0:
         raise ValueError("LOGIN_BLOCK_MINUTES debe ser mayor que 0.")
     return SessionSettings(session_minutes, login_max_attempts, login_block_minutes)
+
+
+def load_face_settings() -> FaceSettings:
+    load_dotenv(find_dotenv(usecwd=True))
+    raw_dataset_dir = os.getenv("BIOMETRIC_DATASET_DIR", "").strip()
+    return FaceSettings(
+        match_threshold=float(os.getenv("FACE_MATCH_THRESHOLD", "0.363")),
+        dataset_dir=Path(raw_dataset_dir) if raw_dataset_dir else None,
+    )
