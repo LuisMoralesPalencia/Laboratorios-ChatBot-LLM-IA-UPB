@@ -43,6 +43,10 @@ class VectorStore:
     def add(self, chunks: list[Chunk], vectors: np.ndarray) -> None:
         if len(chunks) != len(vectors):
             raise ValueError("Debe haber exactamente un vector por fragmento.")
+        existing_ids = {chunk.id for chunk in self.chunks}
+        incoming_ids = [chunk.id for chunk in chunks]
+        if len(set(incoming_ids)) != len(incoming_ids) or existing_ids.intersection(incoming_ids):
+            raise ValueError("No se pueden insertar chunks duplicados en el índice.")
         vectors = normalize(np.asarray(vectors, dtype=np.float32))
         self._vectors = vectors if self._vectors is None else np.vstack([self._vectors, vectors])
         self.chunks.extend(chunks)
@@ -57,6 +61,10 @@ class VectorStore:
 
     def save(self, index_dir: Path) -> None:
         index_dir.mkdir(parents=True, exist_ok=True)
+        for filename in (VECTORS_FILE, CHUNKS_FILE):
+            path = index_dir / filename
+            if path.exists():
+                path.unlink()
         np.save(index_dir / VECTORS_FILE, self._vectors)
         data = {"embedding_model": self.embedding_model, "chunks": [asdict(c) for c in self.chunks]}
         (index_dir / CHUNKS_FILE).write_text(

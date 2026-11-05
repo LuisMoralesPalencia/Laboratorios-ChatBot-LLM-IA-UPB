@@ -10,6 +10,7 @@ capacidad más.
 
 from dataclasses import dataclass
 
+from access import Role, can_access, validate_role
 from embeddings import Embedder
 from llm_client import LLMClient, LLMResponse, Message
 from prompts import build_rag_messages
@@ -50,13 +51,21 @@ class CourseRAG:
         self.top_k = top_k
         self.min_score = min_score
 
-    def retrieve(self, question: str) -> list[SearchResult]:
+    def retrieve(self, question: str, role: Role = "publico") -> list[SearchResult]:
+        validate_role(role)
         query_vector = self.embedder.embed_query(question)
-        results = self.store.search(query_vector, self.top_k)
-        return [result for result in results if result.score >= self.min_score]
+        candidates = self.store.search(query_vector, len(self.store))
+        permitted = [
+            result
+            for result in candidates
+            if result.score >= self.min_score and can_access(role, result.chunk.access_level)
+        ]
+        return permitted[: self.top_k]
 
-    def answer(self, question: str, history: list[Message] | None = None) -> RAGAnswer:
-        sources = self.retrieve(question)
+    def answer(
+        self, question: str, history: list[Message] | None = None, role: Role = "publico"
+    ) -> RAGAnswer:
+        sources = self.retrieve(question, role)
         messages = build_rag_messages(history or [], question, format_context(sources))
         response = self.llm.chat(messages)
         return RAGAnswer(text=response.text, sources=sources, messages=messages, response=response)

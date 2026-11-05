@@ -13,11 +13,12 @@ import asyncio
 import sys
 from typing import Any
 
+from access import Role, validate_role
 from rag import CourseRAG, format_context
 from tools import Tool
 
 
-def rag_tool(rag: CourseRAG) -> Tool:
+def rag_tool(rag: CourseRAG, role: Role = "publico") -> Tool:
     # TODO 1: convierte la recuperación del Lab 02 en una Tool (mira los campos de Tool en tools.py).
     #   - name: "buscar_documentos"; origin: "rag"; read_only: True (buscar no modifica nada).
     #   - description: qué documentos contiene (programa, docente, horarios, evaluación, fechas de
@@ -28,9 +29,11 @@ def rag_tool(rag: CourseRAG) -> Tool:
     #   - run: una función async que reciba los argumentos, recupere con rag.retrieve(consulta) y
     #     devuelva format_context(resultados). Solo recupera: NO llames a rag.answer (¿por qué?).
     
+    trusted_role = validate_role(role)
+
     async def run(args: dict[str, Any]) -> str:
         consulta = args["consulta"]
-        resultados = rag.retrieve(consulta)
+        resultados = rag.retrieve(consulta, trusted_role)
         return format_context(resultados)
 
     return Tool(

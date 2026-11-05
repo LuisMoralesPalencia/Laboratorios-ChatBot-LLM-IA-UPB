@@ -10,24 +10,49 @@ Uso (prueba de chunking, sin modelos ni API):
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
 
+from access import AccessLevel
+
+ACCESS_PATHS: Final[dict[tuple[str, ...], AccessLevel]] = {
+    ("publico",): "publico",
+    ("restringido", "estudiante"): "estudiante",
+    ("restringido", "docente"): "docente",
+}
 
 @dataclass(frozen=True)
 class Document:
-    source: str  # nombre del archivo, p. ej. "evaluacion.md"
+    source: str
     text: str
+    access_level: AccessLevel
 
 
 @dataclass(frozen=True)
 class Chunk:
-    id: str  # documento de origen + posición, p. ej. "evaluacion.md#2"
+    id: str
     source: str
     text: str
+    access_level: AccessLevel
 
 
 def load_documents(data_dir: Path) -> list[Document]:
-    paths = sorted(data_dir.glob("*.md"))
-    return [Document(source=path.name, text=path.read_text(encoding="utf-8")) for path in paths]
+    documents = []
+    for path in sorted(data_dir.rglob("*.md")):
+        relative_parts = path.relative_to(data_dir).parts
+        access_level = next(
+            (level for prefix, level in ACCESS_PATHS.items() if relative_parts[: len(prefix)] == prefix),
+            None,
+        )
+        if access_level is None:
+            raise ValueError(f"Documento fuera de una carpeta de acceso reconocida: {path}")
+        documents.append(
+            Document(
+                source=path.relative_to(data_dir).as_posix(),
+                text=path.read_text(encoding="utf-8"),
+                access_level=access_level,
+            )
+        )
+    return documents
 
 
 def chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
@@ -48,7 +73,7 @@ def chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
 
 def chunk_documents(documents: list[Document], chunk_size: int, overlap: int) -> list[Chunk]:
     return [
-        Chunk(id=f"{doc.source}#{i}", source=doc.source, text=text)
+        Chunk(id=f"{doc.source}#{i}", source=doc.source, text=text, access_level=doc.access_level)
         for doc in documents
         for i, text in enumerate(chunk_text(doc.text, chunk_size, overlap))
     ]
