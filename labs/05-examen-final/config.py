@@ -63,6 +63,16 @@ class FaceSettings:
     dataset_dir: Path | None
 
 
+@dataclass(frozen=True)
+class LivenessSettings:
+    timeout_seconds: int
+    frame_step: int
+    min_frames: int
+    turn_threshold: float
+    approach_ratio: float
+    continuity_threshold: float
+
+
 def load_settings() -> Settings:
     # Busca el archivo .env desde el directorio actual hacia arriba.
     load_dotenv(find_dotenv(usecwd=True))
@@ -132,3 +142,22 @@ def load_face_settings() -> FaceSettings:
         match_threshold=float(os.getenv("FACE_MATCH_THRESHOLD", "0.363")),
         dataset_dir=Path(raw_dataset_dir) if raw_dataset_dir else None,
     )
+
+
+def load_liveness_settings() -> LivenessSettings:
+    load_dotenv(find_dotenv(usecwd=True))
+    settings = LivenessSettings(
+        timeout_seconds=int(os.getenv("LIVENESS_TIMEOUT_SECONDS", "60")),
+        frame_step=int(os.getenv("LIVENESS_FRAME_STEP", "3")),
+        min_frames=int(os.getenv("LIVENESS_MIN_FRAMES", "3")),
+        turn_threshold=float(os.getenv("LIVENESS_TURN_THRESHOLD", "0.08")),
+        approach_ratio=float(os.getenv("LIVENESS_APPROACH_RATIO", "1.25")),
+        continuity_threshold=float(os.getenv("LIVENESS_CONTINUITY_THRESHOLD", "0.50")),
+    )
+    if settings.timeout_seconds <= 0 or settings.frame_step <= 0 or settings.min_frames < 2:
+        raise ValueError("La configuración de liveness tiene valores inválidos.")
+    if settings.turn_threshold <= 0 or settings.approach_ratio <= 1:
+        raise ValueError("Los umbrales de movimiento de liveness tienen valores inválidos.")
+    if not 0 <= settings.continuity_threshold <= 1:
+        raise ValueError("LIVENESS_CONTINUITY_THRESHOLD debe estar entre 0 y 1.")
+    return settings
