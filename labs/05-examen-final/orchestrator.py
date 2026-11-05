@@ -149,7 +149,12 @@ class Orchestrator:
             if previous_session_id is not None:
                 await self.mcp_manager.close_session(previous_session_id)
                 self._session_ids_by_user.pop(normalized, None)
-            raise PermissionError("No existe una sesión autenticada activa.")
+                raise PermissionError(
+                    "La sesión autenticada dejó de estar activa durante la consulta."
+                )
+            await self.mcp_manager.get_or_create_public()
+            tools = await self.mcp_manager.load_tools(None)
+            return [*LOCAL_TOOLS, *tools], "publico"
 
         self._session_ids_by_user[normalized] = session.session_id
         await self.mcp_manager.get_or_create_authenticated(

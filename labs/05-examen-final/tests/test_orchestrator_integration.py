@@ -120,6 +120,49 @@ def test_public_and_authenticated_contexts_are_selected_by_session(tmp_path: Pat
     asyncio.run(scenario(tmp_path))
 
 
+def test_known_telegram_user_without_session_uses_public_process(tmp_path: Path) -> None:
+    async def scenario(tmp_path: Path) -> None:
+        clock = Clock()
+        sessions = _session_manager(tmp_path, clock)
+        manager = FakeManager()
+        orchestrator = _orchestrator(sessions, manager)
+
+        tools, role = await orchestrator._tools_for_request(101)
+
+        assert {tool.name for tool in tools} == {
+            "fecha_actual",
+            "dias_hasta",
+            "calcular_nota_final",
+        }
+        assert role == "publico"
+        assert manager.public_calls == 1
+        assert manager.authenticated_calls == []
+        assert manager.loaded == [None]
+
+    asyncio.run(scenario(tmp_path))
+
+
+def test_session_manager_error_is_not_treated_as_public_access(tmp_path: Path) -> None:
+    class BrokenSessions:
+        def get_active_session(self, telegram_user_id):
+            raise RuntimeError("session store unavailable")
+
+    async def scenario(tmp_path: Path) -> None:
+        manager = FakeManager()
+        orchestrator = _orchestrator(BrokenSessions(), manager)
+
+        try:
+            await orchestrator._tools_for_request(101)
+        except RuntimeError as exc:
+            assert str(exc) == "session store unavailable"
+        else:
+            raise AssertionError("El error del SessionManager fue ocultado")
+        assert manager.public_calls == 0
+        assert manager.authenticated_calls == []
+
+    asyncio.run(scenario(tmp_path))
+
+
 def test_users_and_sessions_never_share_authenticated_process(tmp_path: Path) -> None:
     async def scenario(tmp_path: Path) -> None:
         clock = Clock()
